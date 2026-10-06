@@ -3,5 +3,3 @@ __pycache__/
 *.pyc
 .DS_Store
 .vscode/
-data/raw/*.csv
-data/processed/*.npz
