@@ -45,7 +45,6 @@ dependencies:
   - cairo=1.18.4
   - capnproto=1.2.0
   - cartopy=0.25.0
-  - cdo=2.5.0
   - certifi=2026.5.20
   - cfitsio=4.6.3
   - cftime=1.6.4
@@ -83,8 +82,6 @@ dependencies:
   - fribidi=1.0.16
   - fsspec=2025.12.0
   - geos=3.14.1
-  - gettext=0.25.1
-  - gettext-tools=0.25.1
   - gflags=2.2.2
   - giflib=5.2.2
   - glew=2.2.0
@@ -151,7 +148,6 @@ dependencies:
   - libcrc32c=1.1.2
   - libcurl=8.17.0
   - libdeflate=1.25
-  - libedit=3.1.20250104
   - libev=4.33
   - libevent=2.1.12
   - libexpat=2.7.3
@@ -242,8 +238,6 @@ dependencies:
   - munkres=1.1.4
   - muparser=2.3.5
   - narwhals=2.14.0
-  - ncurses=6.5
-  - ncview=2.1.8
   - nest-asyncio=1.5.1
   - netcdf4=1.7.3
   - networkx=3.6.1
@@ -301,7 +295,6 @@ dependencies:
   - qwt=6.3.0
   - rav1e=0.8.1
   - re2=2025.11.05
-  - readline=8.3
   - scikit-image=0.26.0
   - scipy=1.16.3
   - shapely=2.1.2
@@ -320,7 +313,6 @@ dependencies:
   - toolz=1.1.0
   - tornado=6.5.1
   - traitlets=5.14.3
-  - tzcode=2025c
   - tzdata=2025b
   - udunits2=2.2.28
   - unicodedata2=17.0.0
