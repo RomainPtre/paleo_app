@@ -2,6 +2,7 @@ import streamlit as st
 from src.services.preprocessor import PreprocessorService
 from src.services.map_service import MapService
 from src.services.timeline_service import TimelineService
+from src.services.silhouette_service import SilhouetteService
 from src.ui.map_view import MapViewBuilder
 from src.ui.sidebar_view import SidebarView
 
@@ -34,7 +35,7 @@ master_txt = "#ffffff"
 sauro_bg = "#3498db" if st.session_state.show_sauro else "#1e293b"
 sauro_txt = "#ffffff" if st.session_state.show_sauro else "#64748b"
 
-thero_bg = "#e67e22" if st.session_state.show_thero else "#1e293b"  # Updated to Orange
+thero_bg = "#e67e22" if st.session_state.show_thero else "#1e293b" # Updated to Orange
 thero_txt = "#ffffff" if st.session_state.show_thero else "#64748b"
 
 ornitho_bg = "#f1c40f" if st.session_state.show_ornitho else "#1e293b"
@@ -48,68 +49,68 @@ st.markdown(f"""
 /* Anti-flicker styling for Plotly container */
 div[data-testid="stPlotlyChart"], 
 div[data-testid="stPlotlyChart"] * {{
-    transition: none !important;
-    opacity: 1 !important;
+ transition: none !important;
+ opacity: 1 !important;
 }}
 div[data-testid="stElementContainer"] {{
-    transition: none !important;
+ transition: none !important;
 }}
 
 /* Dynamic styling for master toggle button */
 .st-key-btn_master button, .st-key-btn_master button:hover, .st-key-btn_master button:focus {{
-    background-color: {master_bg} !important;
-    color: {master_txt} !important;
-    border: 1px solid {master_bg} !important;
-    font-weight: bold !important;
-    width: 100% !important;
+ background-color: {master_bg} !important;
+ color: {master_txt} !important;
+ border: 1px solid {master_bg} !important;
+ font-weight: bold !important;
+ width: 100% !important;
 }}
 .st-key-btn_master button p {{
-    color: {master_txt} !important;
+ color: {master_txt} !important;
 }}
 
 /* Custom styled filter buttons targeting button tag and paragraph child */
 .st-key-btn_sauro button, .st-key-btn_sauro button:hover, .st-key-btn_sauro button:focus {{
-    background-color: {sauro_bg} !important;
-    color: {sauro_txt} !important;
-    border: 1px solid {sauro_bg} !important;
-    font-weight: bold !important;
-    width: 100% !important;
+ background-color: {sauro_bg} !important;
+ color: {sauro_txt} !important;
+ border: 1px solid {sauro_bg} !important;
+ font-weight: bold !important;
+ width: 100% !important;
 }}
 .st-key-btn_sauro button p {{
-    color: {sauro_txt} !important;
+ color: {sauro_txt} !important;
 }}
 
 .st-key-btn_thero button, .st-key-btn_thero button:hover, .st-key-btn_thero button:focus {{
-    background-color: {thero_bg} !important;
-    color: {thero_txt} !important;
-    border: 1px solid {thero_bg} !important;
-    font-weight: bold !important;
-    width: 100% !important;
+ background-color: {thero_bg} !important;
+ color: {thero_txt} !important;
+ border: 1px solid {thero_bg} !important;
+ font-weight: bold !important;
+ width: 100% !important;
 }}
 .st-key-btn_thero button p {{
-    color: {thero_txt} !important;
+ color: {thero_txt} !important;
 }}
 
 .st-key-btn_ornitho button, .st-key-btn_ornitho button:hover, .st-key-btn_ornitho button:focus {{
-    background-color: {ornitho_bg} !important;
-    color: {ornitho_txt} !important;
-    border: 1px solid {ornitho_bg} !important;
-    font-weight: bold !important;
-    width: 100% !important;
+ background-color: {ornitho_bg} !important;
+ color: {ornitho_txt} !important;
+ border: 1px solid {ornitho_bg} !important;
+ font-weight: bold !important;
+ width: 100% !important;
 }}
 .st-key-btn_ornitho button p {{
-    color: {ornitho_txt} !important;
+ color: {ornitho_txt} !important;
 }}
 
 .st-key-btn_indet button, .st-key-btn_indet button:hover, .st-key-btn_indet button:focus {{
-    background-color: {indet_bg} !important;
-    color: {indet_txt} !important;
-    border: 1px solid {indet_bg} !important;
-    font-weight: bold !important;
-    width: 100% !important;
+ background-color: {indet_bg} !important;
+ color: {indet_txt} !important;
+ border: 1px solid {indet_bg} !important;
+ font-weight: bold !important;
+ width: 100% !important;
 }}
 .st-key-btn_indet button p {{
-    color: {indet_txt} !important;
+ color: {indet_txt} !important;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -135,12 +136,41 @@ with col_filters:
             st.button(master_label, key="btn_master", on_click=toggle_all, args=(not all_active,))
 
         c1, c2, c3, c4 = st.columns(4)
+        
+        # --- Sauropodes (Silhouette à gauche) ---
         with c1:
-            st.button("Sauropodes", key="btn_sauro", on_click=toggle_group, args=("show_sauro",))
+            sc1, sc2 = st.columns([1, 2.5], vertical_alignment="center")
+            with sc1:
+                img_sauro = SilhouetteService.get_colored_silhouette(
+                    "data/assets/silhouettes/Patagotitan.png", MapViewBuilder.COLOR_MAP['Sauropodes']
+                )
+                st.image(img_sauro, width="stretch")
+            with sc2:
+                st.button("Sauropodes", key="btn_sauro", on_click=toggle_group, args=("show_sauro",))
+
+        # --- Théropodes (Silhouette à gauche) ---
         with c2:
-            st.button("Théropodes", key="btn_thero", on_click=toggle_group, args=("show_thero",))
+            sc1, sc2 = st.columns([1, 2.5], vertical_alignment="center")
+            with sc1:
+                img_thero = SilhouetteService.get_colored_silhouette(
+                    "data/assets/silhouettes/Tyrannosaurus_sil.png", MapViewBuilder.COLOR_MAP['Théropodes']
+                )
+                st.image(img_thero, width="stretch")
+            with sc2:
+                st.button("Théropodes", key="btn_thero", on_click=toggle_group, args=("show_thero",))
+
+        # --- Ornithischiens (Silhouette à gauche) ---
         with c3:
-            st.button("Ornithischiens", key="btn_ornitho", on_click=toggle_group, args=("show_ornitho",))
+            sc1, sc2 = st.columns([1, 2.5], vertical_alignment="center")
+            with sc1:
+                img_stego = SilhouetteService.get_colored_silhouette(
+                    "data/assets/silhouettes/Stego.png", MapViewBuilder.COLOR_MAP['Ornithischiens']
+                )
+                st.image(img_stego, width="stretch")
+            with sc2:
+                st.button("Ornithischiens", key="btn_ornitho", on_click=toggle_group, args=("show_ornitho",))
+
+        # --- Indéterminé (sans silhouette) ---
         with c4:
             st.button("Indéterminé", key="btn_indet", on_click=toggle_group, args=("show_indet",))
 
@@ -178,7 +208,7 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⏳ Échelle des temps")
 if base_chart_img is not None:
     chart_with_indicator = timeline_service.render_chart_with_cursor(base_chart_img, target_age)
-    st.sidebar.image(chart_with_indicator, use_container_width=True)
+    st.sidebar.image(chart_with_indicator, width="stretch")
 else:
     st.sidebar.warning("Charte introuvable dans data/assets/illustrations/")
 
