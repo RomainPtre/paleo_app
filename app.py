@@ -3,6 +3,7 @@ from src.services.preprocessor import PreprocessorService
 from src.services.map_service import MapService
 from src.services.timeline_service import TimelineService
 from src.services.silhouette_service import SilhouetteService
+from src.services.search_service import SearchService
 from src.ui.map_view import MapViewBuilder
 from src.ui.sidebar_view import SidebarView
 
@@ -11,10 +12,13 @@ from src.ui.sidebar_view import SidebarView
 # -----------------------------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Le monde des dinosaures", page_icon="🦖")
 
-# Initialize session state variables for group filters
+# Initialize session state variables
 for group_key in ["show_sauro", "show_thero", "show_ornitho", "show_indet"]:
     if group_key not in st.session_state:
         st.session_state[group_key] = True
+
+if "target_age" not in st.session_state:
+    st.session_state.target_age = 100
 
 def toggle_group(key_name: str):
     """Callback function toggling single clade visibility in session state."""
@@ -35,7 +39,7 @@ master_txt = "#ffffff"
 sauro_bg = "#3498db" if st.session_state.show_sauro else "#1e293b"
 sauro_txt = "#ffffff" if st.session_state.show_sauro else "#64748b"
 
-thero_bg = "#e67e22" if st.session_state.show_thero else "#1e293b" # Updated to Orange
+thero_bg = "#e67e22" if st.session_state.show_thero else "#1e293b"
 thero_txt = "#ffffff" if st.session_state.show_thero else "#64748b"
 
 ornitho_bg = "#f1c40f" if st.session_state.show_ornitho else "#1e293b"
@@ -121,11 +125,36 @@ dem_store, dem_file_map = MapService.load_all_paleodems()
 timeline_service = TimelineService()
 base_chart_img = timeline_service.load_base_chart()
 
-# 2. Header layout: Title on left, Filter buttons frame on right
-col_title, col_filters = st.columns([1, 1.2])
+# --- 1. Titre seul tout en haut ---
+st.title("🦖 Le monde des dinosaures")
 
-with col_title:
-    st.title("🦖 Le monde des dinosaures")
+# --- 2. Header layout: Barre de recherche à gauche, Filtres à droite ---
+col_search, col_filters = st.columns([1, 1.2])
+
+search_specimen_idx = None
+selected_dino = None
+
+with col_search:
+    with st.container(border=True):
+        st.markdown("**🔍 Rechercher un dinosaure**")
+        search_options = SearchService.get_unique_names(dataset.df)
+        
+        selected_dino = st.selectbox(
+            "Recherche par nom accepted_name",
+            options=search_options,
+            index=None,
+            placeholder="Tapez un nom (ex: Tyrannosaurus)...",
+            key="dino_search_select",
+            label_visibility="collapsed"
+        )
+        
+        # Traitement de la sélection dans la recherche
+        if selected_dino:
+            spec_idx, spec_age = SearchService.get_specimen_search_details(dataset.df, selected_dino)
+            search_specimen_idx = spec_idx
+            if spec_age is not None and st.session_state.get("last_searched_dino") != selected_dino:
+                st.session_state.target_age = spec_age
+                st.session_state.last_searched_dino = selected_dino
 
 with col_filters:
     with st.container(border=True):
@@ -174,12 +203,25 @@ with col_filters:
         with c4:
             st.button("Indéterminé", key="btn_indet", on_click=toggle_group, args=("show_indet",))
 
-# 3. Main time navigation slider
-target_age = st.slider("⏱️ Âge de la carte (Ma)", min_value=0, max_value=320, value=100, step=5)
+# 3. Main time navigation slider (Lié directement à target_age)
+target_age = st.slider(
+    "⏱️ Âge de la carte (Ma)",
+    min_value=0,
+    max_value=320,
+    step=5,
+    key="target_age"
+)
 
 # 4. Process paleodem and filtered occurrences
 b64_image_str, paleodem_filename, paleodem_age = MapService.get_closest_map(dem_store, dem_file_map, target_age)
 df_filtered, active_indices = dataset.get_filtered_occurrences(target_age)
+
+# Filtrage par recherche textuelle si un taxon est sélectionné
+if selected_dino and not df_filtered.empty and "accepted_name" in df_filtered.columns:
+    mask_search = (df_filtered["accepted_name"] == selected_dino).to_numpy()
+    df_filtered = df_filtered[mask_search]
+    active_indices = active_indices[mask_search]
+
 calc_lngs, calc_lats = dataset.get_coordinates(active_indices, paleodem_age)
 
 # Build active clade list from session state toggle buttons
@@ -225,10 +267,17 @@ selection = st.plotly_chart(
     key="map_canvas"
 )
 
-# 7. Render selected specimen details in reserved container
+# 7. Render selected specimen details in reserved container (de la recherche ou du clic carte)
+selected_customdata_idx = None
+
 if selection and isinstance(selection, dict) and "selection" in selection:
     pts = selection["selection"].get("points", [])
     if pts:
         point_data = pts[0]
-        customdata_idx = point_data.get("customdata")
-        SidebarView.render_selected_specimen(dataset.df, customdata_idx, container=specimen_container)
+        selected_customdata_idx = point_data.get("customdata")
+
+# Priorité au spécimen recherché s'il vient d'être sélectionné
+final_specimen_idx = search_specimen_idx if search_specimen_idx is not None else selected_customdata_idx
+
+if final_specimen_idx is not None:
+    SidebarView.render_selected_specimen(dataset.df, final_specimen_idx, container=specimen_container)
