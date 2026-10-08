@@ -158,7 +158,15 @@ with col_search:
         )
         
         if selected_dino:
-            spec_idx, best_age, (max_ma, min_ma) = SearchService.get_specimen_search_details(dataset.df, selected_dino)
+            res = SearchService.get_specimen_search_details(dataset.df, selected_dino)
+            if len(res) == 4:
+                spec_idx, best_age, max_ma, min_ma = res
+            elif len(res) == 2:
+                spec_idx, best_age = res
+                max_ma, min_ma = None, None
+            else:
+                spec_idx, best_age, max_ma, min_ma = None, None, None, None
+
             search_specimen_idx = spec_idx
             if best_age is not None and st.session_state.get("last_searched_dino") != selected_dino:
                 st.session_state.target_age = best_age

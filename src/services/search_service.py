@@ -14,22 +14,22 @@ class SearchService:
     @staticmethod
     def get_specimen_search_details(
         df: pd.DataFrame, selected_name: str, map_ages: list[int] | None = None
-    ) -> tuple[int | None, int | None, tuple[float | None, float | None]]:
+    ) -> tuple[int | None, int | None, float | None, float | None]:
         """
-        Retourne l'index du spécimen (customdata), l'âge de la carte (pas de 5 Ma) comportant le plus grand
-        nombre d'occurrences pour le taxon sélectionné, ainsi que sa plage temporelle globale (max_ma, min_ma).
+        Retourne l'index du spécimen (customdata), l'âge de la carte comportant le plus grand nombre
+        d'occurrences pour le taxon sélectionné, ainsi que ses bornes temporelles globales (max_ma, min_ma).
         """
         if df is None or df.empty or not selected_name or "accepted_name" not in df.columns:
-            return None, None, (None, None)
+            return None, None, None, None
 
         matches = df[df["accepted_name"] == selected_name]
         if matches.empty:
-            return None, None, (None, None)
+            return None, None, None, None
 
         first_match = matches.iloc[0]
         specimen_idx = first_match.name
 
-        # Extrait la plage temporelle globale du taxon (de l'âge max à l'âge min)
+        # Extrait la plage temporelle globale du taxon
         max_ma = matches["max_ma"].max() if "max_ma" in matches.columns and pd.notna(matches["max_ma"].max()) else None
         min_ma = matches["min_ma"].min() if "min_ma" in matches.columns and pd.notna(matches["min_ma"].min()) else None
 
@@ -50,4 +50,4 @@ class SearchService:
                 max_count = count
                 best_age = age
 
-        return specimen_idx, best_age, (max_ma, min_ma)
+        return specimen_idx, best_age, max_ma, min_ma
