@@ -27,14 +27,39 @@ class PreprocessorService:
         lng_col = next((c for c in ['lng', 'decimallongitude', 'longitude'] if c in df.columns), 'lng')
         df = df.dropna(subset=[lat_col, lng_col]).reset_index(drop=True)
 
+        # Keyword tuples for systematic clade matching across PBDB taxonomy fields (alphabetically sorted)
+        theropod_keywords = (
+            'abelisaur', 'allosaur', 'aves', 'averostr', 'avetheropod',
+            'caegnathid', 'carcharodontosaur', 'ceratosaur', 'coelurosaur',
+            'dromaeosaur', 'maniraptor', 'megalosaur', 'neothero', 'noasaur',
+            'orionid', 'ornithomimid', 'ornithomimo', 'oviraptor',
+            'oviraptosaur', 'pennaraptor', 'spinosaur', 'tetanur',
+            'therizinosaur', 'theropod', 'theropoda', 'troodontid',
+            'tyrannosaur'
+        )
+
+        sauropod_keywords = (
+            'brachiosaur', 'camarasaur', 'cetiosaur', 'dicraeosaur',
+            'diplodoc', 'eusauropod', 'flagellicaud', 'lithostro',
+            'macronaria', 'mamenchisaur', 'neosauropod', 'rebbachisaur',
+            'sauropod', 'sauropodomorpha', 'somphospond', 'titanosaur',
+            'turiasaur'
+        )
+
+        ornithischian_keywords = (
+            'ankylosaur', 'ceratops', 'fabrosaur', 'hadrosaur',
+            'heterodontosaur', 'hypsilophodont', 'iguanodont',
+            'ornithisch', 'pachycephalosaur', 'scelidosaur', 'stegosaur'
+        )
+
         # Assign explicit French frontend display labels for dinosaur clades
         def assign_dino_group(r):
             text = f"{r.get('order','')} {r.get('class','')} {r.get('family','')} {r.get('accepted_name','')} {r.get('identified_name','')}".lower()
-            if 'theropod' in text or 'theropoda' in text or 'aves' in text:
+            if any(keyword in text for keyword in theropod_keywords):
                 return 'Théropodes'
-            elif 'sauropod' in text or 'sauropodomorpha' in text:
+            elif any(keyword in text for keyword in sauropod_keywords):
                 return 'Sauropodes'
-            elif 'ornithisch' in text or 'ceratops' in text or 'hadrosaur' in text or 'stegosaur' in text or 'ankylosaur' in text:
+            elif any(keyword in text for keyword in ornithischian_keywords):
                 return 'Ornithischiens'
             return 'Indéterminé'
 
