@@ -12,41 +12,42 @@ class SearchService:
         return sorted(df["accepted_name"].dropna().unique().tolist())
 
     @staticmethod
-    def get_specimen_search_details(df: pd.DataFrame, selected_name: str) -> tuple[int | None, int | None]:
+    def get_specimen_search_details(
+        df: pd.DataFrame, selected_name: str, map_ages: list[int] | None = None
+    ) -> tuple[int | None, int | None, tuple[float | None, float | None]]:
         """
-        Retourne l'index du spécimen (customdata) et son âge géologique arrondi au pas de 5 Ma
-        pour le taxon sélectionné.
+        Retourne l'index du spécimen (customdata), l'âge de la carte (pas de 5 Ma) comportant le plus grand
+        nombre d'occurrences pour le taxon sélectionné, ainsi que sa plage temporelle globale (max_ma, min_ma).
         """
         if df is None or df.empty or not selected_name or "accepted_name" not in df.columns:
-            return None, None
+            return None, None, (None, None)
 
         matches = df[df["accepted_name"] == selected_name]
         if matches.empty:
-            return None, None
+            return None, None, (None, None)
 
         first_match = matches.iloc[0]
         specimen_idx = first_match.name
 
-        # Détermination de l'âge géologique moyen du taxon
-        raw_age = None
-        if "mean_ma" in matches.columns and pd.notna(matches["mean_ma"].mean()):
-            raw_age = matches["mean_ma"].mean()
-        elif "max_ma" in matches.columns and "min_ma" in matches.columns:
-            valid_m = matches.dropna(subset=["max_ma", "min_ma"])
-            if not valid_m.empty:
-                raw_age = ((valid_m["max_ma"] + valid_m["min_ma"]) / 2).mean()
+        # Extrait la plage temporelle globale du taxon (de l'âge max à l'âge min)
+        max_ma = matches["max_ma"].max() if "max_ma" in matches.columns and pd.notna(matches["max_ma"].max()) else None
+        min_ma = matches["min_ma"].min() if "min_ma" in matches.columns and pd.notna(matches["min_ma"].min()) else None
 
-        if raw_age is None:
-            for col in ["mean_ma", "max_ma", "age", "min_ma"]:
-                if col in first_match and pd.notna(first_match[col]):
-                    raw_age = float(first_match[col])
-                    break
+        if map_ages is None:
+            map_ages = list(range(0, 325, 5))
 
-        if raw_age is None:
-            return specimen_idx, None
+        # Détermine le pas de carte ayant le plus grand nombre d'occurrences
+        best_age = map_ages[0]
+        max_count = -1
 
-        # Arrondi au pas de 5 Ma (ex: 66 Ma -> 65 Ma, 68 Ma -> 70 Ma)
-        specimen_age = int(round(raw_age / 5.0) * 5)
-        specimen_age = max(0, min(320, specimen_age))
+        for age in map_ages:
+            if "min_ma" in matches.columns and "max_ma" in matches.columns:
+                count = ((matches["min_ma"] <= age) & (matches["max_ma"] >= age)).sum()
+            else:
+                count = 0
 
-        return specimen_idx, specimen_age
+            if count > max_count:
+                max_count = count
+                best_age = age
+
+        return specimen_idx, best_age, (max_ma, min_ma)

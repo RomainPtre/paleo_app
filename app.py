@@ -158,11 +158,19 @@ with col_search:
         )
         
         if selected_dino:
-            spec_idx, spec_age = SearchService.get_specimen_search_details(dataset.df, selected_dino)
+            spec_idx, best_age, (max_ma, min_ma) = SearchService.get_specimen_search_details(dataset.df, selected_dino)
             search_specimen_idx = spec_idx
-            if spec_age is not None and st.session_state.get("last_searched_dino") != selected_dino:
-                st.session_state.target_age = spec_age
+            if best_age is not None and st.session_state.get("last_searched_dino") != selected_dino:
+                st.session_state.target_age = best_age
                 st.session_state.last_searched_dino = selected_dino
+
+            if max_ma is not None and min_ma is not None:
+                range_str = f"{max_ma} Ma" if max_ma == min_ma else f"{max_ma} – {min_ma} Ma"
+                st.markdown(
+                    f"<p style='color: #ffffff; margin-top: 8px; margin-bottom: 0px; font-size: 0.95rem;'>"
+                    f"Plage temporelle : <b style='color: #e74c3c;'>{range_str}</b></p>",
+                    unsafe_allow_html=True
+                )
 
 with col_filters:
     with st.container(border=True):
