@@ -1,7 +1,7 @@
 ## A simple tool for dinosaurs 🦖
 
 This app let you visualize the official non-avian dinosaur database (from PBDB) on actual paleogeographic recontructions throught time !  
-A simplified PBDB !
+A simplified PBDB ! Access it here -> https://paleoapp.streamlit.app/
 <p align="center">
   <img src="data/assets/illustrations/site_screenshot.png" alt="frontpage"/>
 </p>
@@ -16,9 +16,3 @@ A simplified PBDB !
 <p align="center">
   <img src="data/assets/logo/Logo-DIM_PAMIR-FINAL_RVB-accroche_regionIDF.png" alt="Logo DIM PAMIR" width="280"/>
 </p>
-
-URL : https://paleoapp-9stwft7ydr6qlogb3m4utq.streamlit.app/
-
-Reminder :
-
-'''streamlit run app.py --server.port 4040'''
