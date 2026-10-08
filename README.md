@@ -2,6 +2,9 @@
 
 This app let you visualize the official non-avian dinosaur database (from PBDB) on actual paleogeographic recontructions throught time !  
 A simplified PBDB !
+<p align="center">
+  <img src="data/assets/illustrations/site_screenshot.png" alt="frontpage"/>
+</p>
 
 ## References and Acknowledgments
 
