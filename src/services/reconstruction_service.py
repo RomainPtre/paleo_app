@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
@@ -24,9 +25,9 @@ class ReconstructionService:
     ):
         self.rotations_dir = rotations_dir
         self.reconstructions_dir = reconstructions_dir
-        self.rot_file = os.path.join(self.rotations_dir, "PALEOMAP_PlateModel.rot")
-        self.gpml_file = os.path.join(self.rotations_dir, "PALEOMAP_StaticPolygons.gpml")
-        self.gpml_boundaries_file = os.path.join(self.reconstructions_dir, "PALEOMAP_PoliticalBoundaries.gpml")
+        self.rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
+        self.gpml_file = self._resolve_file("PALEOMAP_StaticPolygons.gpml")
+        self.gpml_boundaries_file = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
 
     def _resolve_file(self, filename: str) -> str:
         """Helper to resolve file paths across potential data subdirectories dynamically."""
@@ -44,17 +45,152 @@ class ReconstructionService:
         gpml_path = self._resolve_file("PALEOMAP_StaticPolygons.gpml")
         return os.path.exists(rot_path) and os.path.exists(gpml_path)
 
+    @staticmethod
+    def get_all_plate_ids(gpml_path: str) -> list[int]:
+        """Extracts all unique reconstruction plate IDs from GPML boundary file."""
+        if not os.path.exists(gpml_path):
+            return []
+        tree = ET.parse(gpml_path)
+        root = tree.getroot()
+        namespaces = {
+            "gpml": "http://www.gplates.org/gplates",
+            "gml": "http://www.opengis.net/gml",
+        }
+        plate_ids = set()
+        for feature in root.findall(".//gpml:UnclassifiedFeature", namespaces):
+            plate_elem = feature.find(".//gpml:reconstructionPlateId//gpml:value", namespaces)
+            if plate_elem is None or not plate_elem.text:
+                plate_elem = feature.find(".//gpml:reconstructionPlateId", namespaces)
+            if plate_elem is not None and plate_elem.text:
+                match = re.search(r"\d+", plate_elem.text)
+                if match:
+                    plate_ids.add(int(match.group()))
+        return sorted(list(plate_ids))
+
+    @staticmethod
+    def rotate_coords_rodrigues(coords_list: list, pole_lat: float, pole_lon: float, angle_deg: float) -> list:
+        """Rotates spherical coordinates (lon, lat) using Rodrigues 3D rotation formula."""
+        if angle_deg == 0.0 or not coords_list:
+            return coords_list
+
+        lat_p, lon_p = np.radians(pole_lat), np.radians(pole_lon)
+        theta = np.radians(angle_deg)
+
+        u = np.array([
+            np.cos(lat_p) * np.cos(lon_p),
+            np.cos(lat_p) * np.sin(lon_p),
+            np.sin(lat_p)
+        ], dtype=np.float64)
+
+        coords_arr = np.array(coords_list, dtype=np.float64)
+        lons = np.radians(coords_arr[:, 0])
+        lats = np.radians(coords_arr[:, 1])
+
+        vx = np.cos(lats) * np.cos(lons)
+        vy = np.cos(lats) * np.sin(lons)
+        vz = np.sin(lats)
+        v = np.column_stack([vx, vy, vz])
+
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+
+        u_cross_v = np.cross(u, v)
+        u_dot_v = np.dot(v, u)
+
+        v_rot = (v * cos_t) + (u_cross_v * sin_t) + (u[np.newaxis, :] * u_dot_v[:, np.newaxis] * (1.0 - cos_t))
+
+        norm = np.linalg.norm(v_rot, axis=1, keepdims=True)
+        norm[norm == 0] = 1.0
+        v_rot = v_rot / norm
+
+        lat_rot = np.degrees(np.arcsin(np.clip(v_rot[:, 2], -1.0, 1.0)))
+        lon_rot = np.degrees(np.arctan2(v_rot[:, 1], v_rot[:, 0]))
+
+        return list(zip(lon_rot, lat_rot))
+
+    @staticmethod
+    def rotate_geometry(geom, pole_lat: float, pole_lon: float, angle_deg: float):
+        """Recursively rotates Shapely Polygon, LineString, or MultiPolygon geometry objects."""
+        if angle_deg == 0.0 or geom is None:
+            return geom
+
+        if geom.geom_type == "Polygon":
+            new_ext = ReconstructionService.rotate_coords_rodrigues(list(geom.exterior.coords), pole_lat, pole_lon, angle_deg)
+            new_interiors = [
+                ReconstructionService.rotate_coords_rodrigues(list(interior.coords), pole_lat, pole_lon, angle_deg)
+                for interior in geom.interiors
+            ]
+            return Polygon(new_ext, new_interiors)
+        elif geom.geom_type == "LineString":
+            new_coords = ReconstructionService.rotate_coords_rodrigues(list(geom.coords), pole_lat, pole_lon, angle_deg)
+            return LineString(new_coords)
+        elif geom.geom_type == "MultiPolygon":
+            polys = [ReconstructionService.rotate_geometry(poly, pole_lat, pole_lon, angle_deg) for poly in geom.geoms]
+            return MultiPolygon(polys)
+        return geom
+
+    @staticmethod
+    def load_plate_rotations_cache() -> dict:
+        """Loads precomputed plate rotation Euler poles from local JSON archive."""
+        possible_paths = [
+            os.path.join("data", "processed", "plate_rotations.json"),
+            os.path.join("data", "plate_rotations.json"),
+            "plate_rotations.json"
+        ]
+        json_path = next((p for p in possible_paths if os.path.exists(p)), None)
+        if json_path:
+            try:
+                with open(json_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    @staticmethod
+    def precompute_plate_rotations_cache(gpml_path: str, rot_file: str) -> dict:
+        """Computes and saves Euler poles matrix for all plate IDs across map ages using PyGPlates."""
+        if not HAS_PYGPLATES or not os.path.exists(rot_file):
+            return {}
+
+        try:
+            import pygplates
+
+            rotation_model = pygplates.RotationModel(rot_file)
+            plate_ids = ReconstructionService.get_all_plate_ids(gpml_path)
+
+            cache = {}
+            for plate_id in plate_ids:
+                for age in range(0, 325, 5):
+                    try:
+                        rot = rotation_model.get_rotation(float(age), moving_plate_id=plate_id, fixed_plate_id=0)
+                        lat, lon, angle = rot.get_lat_lon_euler_pole_and_angle_degrees()
+                        cache[f"{plate_id}_{age}"] = [round(lat, 4), round(lon, 4), round(angle, 4)]
+                    except Exception:
+                        cache[f"{plate_id}_{age}"] = [0.0, 0.0, 0.0]
+
+            out_dir = os.path.join("data", "processed")
+            os.makedirs(out_dir, exist_ok=True)
+            json_path = os.path.join(out_dir, "plate_rotations.json")
+            with open(json_path, "w") as f:
+                json.dump(cache, f)
+
+            return cache
+        except Exception:
+            return {}
+
     def generate_precomputed_npz(
         self, df: pd.DataFrame, lat_col: str, lng_col: str, map_ages: list, output_npz_path: str
     ):
         """Runs PyGPlates reconstruction once across all map ages and saves compressed NPZ archive."""
         rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
         gpml_file = self._resolve_file("PALEOMAP_StaticPolygons.gpml")
+        boundaries_file = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
+
+        if HAS_PYGPLATES:
+            self.precompute_plate_rotations_cache(boundaries_file, rot_file)
 
         if not (os.path.exists(rot_file) and os.path.exists(gpml_file)):
-            st.warning(
-                f"Rotation files missing. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml."
-            )
+            st.warning("Rotation files missing. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml.")
             return {}
 
         try:
@@ -190,74 +326,57 @@ class ReconstructionService:
         return gpd.GeoDataFrame(metadata, geometry=geometries, crs="EPSG:4326")
 
     def get_country_boundaries(self, country_name: str, target_age: float = 0.0) -> gpd.GeoDataFrame:
-        """
-        Retrieves country boundaries and calculates tectonic rotation for requested target age.
-        """
+        """Retrieves country boundaries and calculates tectonic rotation for requested target age."""
         if not country_name:
             return gpd.GeoDataFrame()
 
         gpml_path = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
         rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
 
-        return self.get_reconstructed_country_boundaries(
-            gpml_path, rot_file, country_name, float(target_age)
-        )
+        return self.get_reconstructed_country_boundaries(gpml_path, rot_file, country_name, float(target_age))
 
     @staticmethod
     @st.cache_data
     def get_reconstructed_country_boundaries(
         gpml_path: str, rot_file: str, country_name: str, target_age: float
     ) -> gpd.GeoDataFrame:
-        """
-        Extracts boundaries and applies tectonic Euler rotations using primitive hashable types for Streamlit caching.
-        """
+        """Extracts boundaries and applies Euler rotations via cached lookup or PyGPlates."""
         raw_gdf = ReconstructionService.extract_country_boundaries(gpml_path, country_name)
-        if raw_gdf.empty or target_age == 0.0 or not HAS_PYGPLATES or not os.path.exists(rot_file):
+        if raw_gdf.empty or target_age == 0.0:
             return raw_gdf
 
-        try:
-            import pygplates
+        rotations_cache = ReconstructionService.load_plate_rotations_cache()
 
-            rotation_model = pygplates.RotationModel(rot_file)
-            reconstructed_geometries = []
+        if not rotations_cache and HAS_PYGPLATES and os.path.exists(rot_file):
+            rotations_cache = ReconstructionService.precompute_plate_rotations_cache(gpml_path, rot_file)
 
-            for _, row in raw_gdf.iterrows():
-                geom = row.geometry
-                plate_id = int(row.get("plate_id", 0))
+        reconstructed_geometries = []
 
-                finite_rotation = rotation_model.get_rotation(
-                    float(target_age), moving_plate_id=plate_id, fixed_plate_id=0
-                )
+        for _, row in raw_gdf.iterrows():
+            geom = row.geometry
+            plate_id = int(row.get("plate_id", 0))
+            cache_key = f"{plate_id}_{int(target_age)}"
 
-                def rotate_coords(coords_list):
-                    rotated = []
-                    for lon, lat in coords_list:
-                        pt = pygplates.PointOnSphere(lat, lon)
-                        rot_pt = finite_rotation * pt
-                        r_lat, r_lon = rot_pt.to_lat_lon()
-                        rotated.append((r_lon, r_lat))
-                    return rotated
+            if cache_key in rotations_cache:
+                pole_lat, pole_lon, angle_deg = rotations_cache[cache_key]
+                new_geom = ReconstructionService.rotate_geometry(geom, pole_lat, pole_lon, angle_deg)
+            elif HAS_PYGPLATES and os.path.exists(rot_file):
+                try:
+                    import pygplates
 
-                if geom.geom_type == "Polygon":
-                    new_exterior = rotate_coords(geom.exterior.coords)
-                    new_geom = Polygon(new_exterior)
-                elif geom.geom_type == "LineString":
-                    new_coords = rotate_coords(geom.coords)
-                    new_geom = LineString(new_coords)
-                elif geom.geom_type == "MultiPolygon":
-                    polys = []
-                    for poly in geom.geoms:
-                        new_ext = rotate_coords(poly.exterior.coords)
-                        polys.append(Polygon(new_ext))
-                    new_geom = MultiPolygon(polys)
-                else:
+                    rotation_model = pygplates.RotationModel(rot_file)
+                    finite_rotation = rotation_model.get_rotation(
+                        float(target_age), moving_plate_id=plate_id, fixed_plate_id=0
+                    )
+                    pole_lat, pole_lon, angle_deg = finite_rotation.get_lat_lon_euler_pole_and_angle_degrees()
+                    new_geom = ReconstructionService.rotate_geometry(geom, pole_lat, pole_lon, angle_deg)
+                except Exception:
                     new_geom = geom
+            else:
+                new_geom = geom
 
-                reconstructed_geometries.append(new_geom)
+            reconstructed_geometries.append(new_geom)
 
-            rec_gdf = raw_gdf.copy()
-            rec_gdf.geometry = reconstructed_geometries
-            return rec_gdf
-
-        except Exception:
-            return raw_gdf
+        rec_gdf = raw_gdf.copy()
+        rec_gdf.geometry = reconstructed_geometries
+        return rec_gdf
