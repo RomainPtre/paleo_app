@@ -21,6 +21,9 @@ for group_key in ["show_sauro", "show_thero", "show_ornitho", "show_indet"]:
 if "target_age" not in st.session_state:
     st.session_state.target_age = 0
 
+if "show_country_boundary" not in st.session_state:
+    st.session_state.show_country_boundary = False
+
 def toggle_group(key_name: str):
     """Callback function toggling single clade visibility in session state."""
     st.session_state[key_name] = not st.session_state[key_name]
@@ -197,10 +200,35 @@ with col_filters:
         with c4:
             st.button("Indéterminé", key="btn_indet", on_click=toggle_group, args=("show_indet",))
 
-# --- 3. Encadré "Les pays" ---
+# --- 3. Encadré "🔍 Rechercher un pays" ---
 with st.container(border=True):
-    st.markdown("**Les pays**")
-    filter_france = st.checkbox("Afficher la France métropolitaine", value=False)
+    st.markdown("**🔍 Rechercher un pays**")
+    col_p1, col_p2 = st.columns([2.5, 1], vertical_alignment="bottom")
+    
+    country_options = reconstruction_service.get_available_countries()
+    
+    with col_p1:
+        selected_country = st.selectbox(
+            "Rechercher un pays",
+            options=country_options,
+            index=None,
+            placeholder="Tapez un nom de pays (ex: France, USA)...",
+            key="country_search_select",
+            label_visibility="collapsed"
+        )
+        
+        # Activer automatiquement le contour lorsqu'un nouveau pays est sélectionné
+        if selected_country and st.session_state.get("last_selected_country") != selected_country:
+            st.session_state.show_country_boundary = True
+            st.session_state.last_selected_country = selected_country
+        elif not selected_country:
+            st.session_state.last_selected_country = None
+
+    with col_p2:
+        show_country_boundary = st.checkbox(
+            "Afficher le contour",
+            key="show_country_boundary"
+        )
 
 # 4. Main time navigation slider
 target_age = st.slider(
@@ -214,9 +242,10 @@ target_age = st.slider(
 # 5. Process paleodem and filtered occurrences
 b64_image_str, paleodem_filename, paleodem_age = MapService.get_closest_map(dem_store, dem_file_map, target_age)
 
-# Load France boundary rotated precisely to paleodem_age for perfect alignment with raster background
-france_reconstructed_gdf = (
-    reconstruction_service.get_france_boundaries(target_age=paleodem_age) if filter_france else None
+# Load selected country boundary rotated precisely to paleodem_age for perfect raster alignment
+country_reconstructed_gdf = (
+    reconstruction_service.get_country_boundaries(country_name=selected_country, target_age=paleodem_age)
+    if (show_country_boundary and selected_country) else None
 )
 
 # Get occurrences globally (no spatial filtering applied to preserve all fossil points)
@@ -258,9 +287,9 @@ if base_chart_img is not None:
 else:
     st.sidebar.warning("Charte introuvable dans data/assets/illustrations/")
 
-# 7. Build interactive map with reconstructed France boundary Overlay
+# 7. Build interactive map with reconstructed country boundary Overlay
 fig = MapViewBuilder.build_figure(
-    df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, france_gdf=france_reconstructed_gdf
+    df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, country_gdf=country_reconstructed_gdf
 )
 
 selection = st.plotly_chart(

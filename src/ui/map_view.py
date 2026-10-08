@@ -12,7 +12,7 @@ class MapViewBuilder:
     }
 
     @staticmethod
-    def build_figure(df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, france_gdf=None) -> go.Figure:
+    def build_figure(df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, country_gdf=None) -> go.Figure:
         """Builds interactive Plotly figure with styled markers per taxonomic group and red GPML boundary overlay."""
         if len(calc_lngs) > 0:
             rng = np.random.default_rng(seed=42)
@@ -23,9 +23,10 @@ class MapViewBuilder:
 
         fig = go.Figure()
 
-        # Render GPML France Boundaries Overlay in red (#e74c3c)
-        if france_gdf is not None and not france_gdf.empty:
-            for geom in france_gdf.geometry:
+        # Render GPML Country Boundaries Overlay in red (#e74c3c)
+        if country_gdf is not None and not country_gdf.empty:
+            country_label = country_gdf['name'].iloc[0] if 'name' in country_gdf.columns else 'Pays'
+            for geom in country_gdf.geometry:
                 if geom.geom_type == 'Polygon':
                     x, y = geom.exterior.xy
                     fig.add_trace(go.Scatter(
@@ -33,7 +34,7 @@ class MapViewBuilder:
                         y=list(y),
                         mode='lines',
                         line=dict(color='#e74c3c', width=1.8),
-                        name='France (GPML)',
+                        name=country_label,
                         hoverinfo='name',
                         showlegend=False
                     ))
@@ -45,7 +46,7 @@ class MapViewBuilder:
                             y=list(y),
                             mode='lines',
                             line=dict(color='#e74c3c', width=1.8),
-                            name='France (GPML)',
+                            name=country_label,
                             hoverinfo='name',
                             showlegend=False
                         ))
@@ -56,7 +57,7 @@ class MapViewBuilder:
                         y=list(y),
                         mode='lines',
                         line=dict(color='#e74c3c', width=1.8),
-                        name='France (GPML)',
+                        name=country_label,
                         hoverinfo='name',
                         showlegend=False
                     ))

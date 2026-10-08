@@ -14,7 +14,7 @@ except ImportError:
 
 
 class ReconstructionService:
-    """Service dedicated to generating precomputed coordinate NPZ archives and extracting/rotating GPML boundary features."""
+    """Service dedicated to generating precomputed coordinate NPZ archives and extracting/rotating GPML country boundary features."""
 
     def __init__(
         self,
@@ -87,14 +87,44 @@ class ReconstructionService:
             st.error(f"Error during PyGPlates precomputation: {e}")
             return {}
 
+    def get_available_countries(self) -> list[str]:
+        """Returns sorted list of available country names from GPML political boundaries file."""
+        gpml_path = self.gpml_boundaries_file
+        if not os.path.exists(gpml_path):
+            gpml_path = os.path.join(self.rotations_dir, "PALEOMAP_PoliticalBoundaries.gpml")
+        return self._extract_available_countries(gpml_path)
+
     @staticmethod
     @st.cache_data
-    def extract_france_boundaries(gpml_path: str) -> gpd.GeoDataFrame:
+    def _extract_available_countries(gpml_path: str) -> list[str]:
+        if not os.path.exists(gpml_path):
+            return []
+
+        tree = ET.parse(gpml_path)
+        root = tree.getroot()
+        namespaces = {
+            "gpml": "http://www.gplates.org/gplates",
+            "gml": "http://www.opengis.net/gml",
+        }
+
+        countries = set()
+        for feature in root.findall(".//gpml:UnclassifiedFeature", namespaces):
+            name_elem = feature.find('.//gpml:key[.="NAME"]/../gpml:value', namespaces)
+            if name_elem is not None and name_elem.text:
+                c_name = name_elem.text.strip()
+                if c_name:
+                    countries.add(c_name)
+
+        return sorted(list(countries))
+
+    @staticmethod
+    @st.cache_data
+    def extract_country_boundaries(gpml_path: str, country_name: str) -> gpd.GeoDataFrame:
         """
-        Parses the GPML political boundaries file and extracts geometry features for France at present-day (age 0).
+        Parses GPML political boundaries file and extracts geometry features for selected country at present-day (age 0).
         Converts coordinates from GPML standard (lat, lon) to Shapely standard (lon, lat).
         """
-        if not os.path.exists(gpml_path):
+        if not os.path.exists(gpml_path) or not country_name:
             return gpd.GeoDataFrame()
 
         tree = ET.parse(gpml_path)
@@ -109,22 +139,20 @@ class ReconstructionService:
 
         for feature in root.findall(".//gpml:UnclassifiedFeature", namespaces):
             name_elem = feature.find('.//gpml:key[.="NAME"]/../gpml:value', namespaces)
-            fips_elem = feature.find('.//gpml:key[.="FIPS_CODE"]/../gpml:value', namespaces)
+            name = name_elem.text.strip() if (name_elem is not None and name_elem.text) else ""
 
-            plate_id = 307
-            plate_elem = feature.find(".//gpml:reconstructionPlateId//gpml:value", namespaces)
-            if plate_elem is not None and plate_elem.text:
-                try:
-                    parsed_id = int(plate_elem.text.strip())
-                    if parsed_id != 0:
-                        plate_id = parsed_id
-                except ValueError:
-                    pass
+            if name.lower() == country_name.lower():
+                plate_id = 0
+                plate_elem = feature.find(".//gpml:reconstructionPlateId//gpml:value", namespaces)
+                if plate_elem is not None and plate_elem.text:
+                    try:
+                        plate_id = int(plate_elem.text.strip())
+                    except ValueError:
+                        pass
 
-            name = name_elem.text if name_elem is not None else ""
-            fips = fips_elem.text if fips_elem is not None else ""
+                fips_elem = feature.find('.//gpml:key[.="FIPS_CODE"]/../gpml:value', namespaces)
+                fips = fips_elem.text.strip() if (fips_elem is not None and fips_elem.text) else ""
 
-            if name == "France" or fips == "FR":
                 for pos_list in feature.findall(".//gml:posList", namespaces):
                     raw_coords = list(map(float, pos_list.text.strip().split()))
                     coords = [
@@ -142,23 +170,30 @@ class ReconstructionService:
 
         return gpd.GeoDataFrame(metadata, geometry=geometries, crs="EPSG:4326")
 
-    def get_france_boundaries(self, target_age: float = 0.0) -> gpd.GeoDataFrame:
+    def get_country_boundaries(self, country_name: str, target_age: float = 0.0) -> gpd.GeoDataFrame:
         """
-        Retrieves France boundaries and calculates tectonic rotation for requested target age.
+        Retrieves country boundaries and calculates tectonic rotation for requested target age.
         """
+        if not country_name:
+            return gpd.GeoDataFrame()
+
         gpml_path = self.gpml_boundaries_file
         if not os.path.exists(gpml_path):
             gpml_path = os.path.join(self.rotations_dir, "PALEOMAP_PoliticalBoundaries.gpml")
 
-        return self.get_reconstructed_france_boundaries(gpml_path, self.rot_file, float(target_age))
+        return self.get_reconstructed_country_boundaries(
+            gpml_path, self.rot_file, country_name, float(target_age)
+        )
 
     @staticmethod
     @st.cache_data
-    def get_reconstructed_france_boundaries(gpml_path: str, rot_file: str, target_age: float) -> gpd.GeoDataFrame:
+    def get_reconstructed_country_boundaries(
+        gpml_path: str, rot_file: str, country_name: str, target_age: float
+    ) -> gpd.GeoDataFrame:
         """
         Extracts boundaries and applies tectonic Euler rotations using primitive hashable types for Streamlit caching.
         """
-        raw_gdf = ReconstructionService.extract_france_boundaries(gpml_path)
+        raw_gdf = ReconstructionService.extract_country_boundaries(gpml_path, country_name)
         if raw_gdf.empty or target_age == 0.0 or not HAS_PYGPLATES or not os.path.exists(rot_file):
             return raw_gdf
 
@@ -170,9 +205,7 @@ class ReconstructionService:
 
             for _, row in raw_gdf.iterrows():
                 geom = row.geometry
-                plate_id = int(row.get("plate_id", 307))
-                if plate_id == 0:
-                    plate_id = 307
+                plate_id = int(row.get("plate_id", 0))
 
                 finite_rotation = rotation_model.get_rotation(
                     float(target_age), moving_plate_id=plate_id, fixed_plate_id=0
