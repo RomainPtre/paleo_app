@@ -31,11 +31,16 @@ class ReconstructionService:
 
     def _resolve_file(self, filename: str) -> str:
         """Helper to resolve file paths across potential data subdirectories dynamically."""
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         candidates = [
             os.path.join(self.reconstructions_dir, filename),
             os.path.join(self.rotations_dir, filename),
             os.path.join("data", "raw", filename),
             os.path.join("data", filename),
+            os.path.join(base_dir, "data", "reconstructions", filename),
+            os.path.join(base_dir, "data", "rotations", filename),
+            os.path.join(base_dir, "data", "raw", filename),
+            os.path.join(base_dir, "data", filename),
         ]
         return next((p for p in candidates if os.path.exists(p)), os.path.join(self.rotations_dir, filename))
 
@@ -46,26 +51,25 @@ class ReconstructionService:
         return os.path.exists(rot_path) and os.path.exists(gpml_path)
 
     @staticmethod
-    def get_all_plate_ids(gpml_path: str) -> list[int]:
-        """Extracts all unique reconstruction plate IDs from GPML boundary file."""
-        if not os.path.exists(gpml_path):
-            return []
-        tree = ET.parse(gpml_path)
-        root = tree.getroot()
-        namespaces = {
-            "gpml": "http://www.gplates.org/gplates",
-            "gml": "http://www.opengis.net/gml",
-        }
-        plate_ids = set()
-        for feature in root.findall(".//gpml:UnclassifiedFeature", namespaces):
-            plate_elem = feature.find(".//gpml:reconstructionPlateId//gpml:value", namespaces)
-            if plate_elem is None or not plate_elem.text:
-                plate_elem = feature.find(".//gpml:reconstructionPlateId", namespaces)
-            if plate_elem is not None and plate_elem.text:
-                match = re.search(r"\d+", plate_elem.text)
-                if match:
-                    plate_ids.add(int(match.group()))
-        return sorted(list(plate_ids))
+    @st.cache_data
+    def load_plate_rotations_cache() -> dict:
+        """Loads precomputed plate rotation Euler poles from local JSON archive."""
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        possible_paths = [
+            os.path.join("data", "processed", "plate_rotations.json"),
+            os.path.join("data", "plate_rotations.json"),
+            os.path.join(base_dir, "data", "processed", "plate_rotations.json"),
+            os.path.join(base_dir, "data", "plate_rotations.json"),
+            "plate_rotations.json"
+        ]
+        json_path = next((p for p in possible_paths if os.path.exists(p)), None)
+        if json_path:
+            try:
+                with open(json_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
 
     @staticmethod
     def rotate_coords_rodrigues(coords_list: list, pole_lat: float, pole_lon: float, angle_deg: float) -> list:
@@ -128,116 +132,6 @@ class ReconstructionService:
             polys = [ReconstructionService.rotate_geometry(poly, pole_lat, pole_lon, angle_deg) for poly in geom.geoms]
             return MultiPolygon(polys)
         return geom
-
-    @staticmethod
-    def load_plate_rotations_cache() -> dict:
-        """Loads precomputed plate rotation Euler poles from local JSON archive."""
-        possible_paths = [
-            os.path.join("data", "processed", "plate_rotations.json"),
-            os.path.join("data", "plate_rotations.json"),
-            "plate_rotations.json"
-        ]
-        json_path = next((p for p in possible_paths if os.path.exists(p)), None)
-        if json_path:
-            try:
-                with open(json_path, "r") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {}
-
-    @staticmethod
-    def precompute_plate_rotations_cache(gpml_path: str, rot_file: str) -> dict:
-        """Computes and saves Euler poles matrix for all plate IDs across map ages using PyGPlates."""
-        if not HAS_PYGPLATES or not os.path.exists(rot_file):
-            return {}
-
-        try:
-            import pygplates
-
-            rotation_model = pygplates.RotationModel(rot_file)
-            plate_ids = ReconstructionService.get_all_plate_ids(gpml_path)
-
-            cache = {}
-            for plate_id in plate_ids:
-                for age in range(0, 325, 5):
-                    try:
-                        rot = rotation_model.get_rotation(float(age), moving_plate_id=plate_id, fixed_plate_id=0)
-                        lat, lon, angle = rot.get_lat_lon_euler_pole_and_angle_degrees()
-                        cache[f"{plate_id}_{age}"] = [round(lat, 4), round(lon, 4), round(angle, 4)]
-                    except Exception:
-                        cache[f"{plate_id}_{age}"] = [0.0, 0.0, 0.0]
-
-            out_dir = os.path.join("data", "processed")
-            os.makedirs(out_dir, exist_ok=True)
-            json_path = os.path.join(out_dir, "plate_rotations.json")
-            with open(json_path, "w") as f:
-                json.dump(cache, f)
-
-            return cache
-        except Exception:
-            return {}
-
-    def generate_precomputed_npz(
-        self, df: pd.DataFrame, lat_col: str, lng_col: str, map_ages: list, output_npz_path: str
-    ):
-        """Runs PyGPlates reconstruction once across all map ages and saves compressed NPZ archive."""
-        rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
-        gpml_file = self._resolve_file("PALEOMAP_StaticPolygons.gpml")
-        boundaries_file = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
-
-        if HAS_PYGPLATES:
-            self.precompute_plate_rotations_cache(boundaries_file, rot_file)
-
-        if not (os.path.exists(rot_file) and os.path.exists(gpml_file)):
-            st.warning("Rotation files missing. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml.")
-            return {}
-
-        try:
-            import pygplates
-
-            st.info("Generating precomputed coordinates archive using PyGPlates (one-time process)...")
-
-            rotation_model = pygplates.RotationModel(rot_file)
-            partition_polygons = pygplates.FeatureCollection(gpml_file)
-
-            lats = df[lat_col].to_numpy()
-            lngs = df[lng_col].to_numpy()
-
-            point_features = []
-            for lat, lng in zip(lats, lngs):
-                pt = pygplates.PointOnSphere(lat, lng)
-                feature = pygplates.Feature()
-                feature.set_geometry(pt)
-                point_features.append(feature)
-
-            partitioned_features = pygplates.partition(point_features, partition_polygons)
-
-            lookup = {}
-            for age in map_ages:
-                reconstructed_features = []
-                pygplates.reconstruct(
-                    partitioned_features, rotation_model, reconstructed_features, float(age)
-                )
-
-                rec_lats, rec_lngs = [], []
-                for rf in reconstructed_features:
-                    geom = rf.get_reconstructed_geometry()
-                    lat, lng = geom.to_lat_lon()
-                    rec_lats.append(lat)
-                    rec_lngs.append(lng)
-
-                lookup[f"lng_{age}"] = np.array(rec_lngs, dtype=np.float32)
-                lookup[f"lat_{age}"] = np.array(rec_lats, dtype=np.float32)
-
-            os.makedirs(os.path.dirname(output_npz_path), exist_ok=True)
-            np.savez_compressed(output_npz_path, **lookup)
-            st.success(f"Successfully generated precomputed archive: {output_npz_path}")
-            return lookup
-
-        except Exception as e:
-            st.error(f"Error during PyGPlates precomputation: {e}")
-            return {}
 
     def get_available_countries(self) -> list[str]:
         """Returns sorted list of available country names from GPML political boundaries file."""
@@ -333,10 +227,11 @@ class ReconstructionService:
         gpml_path = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
         rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
 
-        return self.get_reconstructed_country_boundaries(gpml_path, rot_file, country_name, float(target_age))
+        return self.get_reconstructed_country_boundaries(
+            gpml_path, rot_file, country_name, float(target_age)
+        )
 
     @staticmethod
-    @st.cache_data
     def get_reconstructed_country_boundaries(
         gpml_path: str, rot_file: str, country_name: str, target_age: float
     ) -> gpd.GeoDataFrame:
@@ -347,15 +242,14 @@ class ReconstructionService:
 
         rotations_cache = ReconstructionService.load_plate_rotations_cache()
 
-        if not rotations_cache and HAS_PYGPLATES and os.path.exists(rot_file):
-            rotations_cache = ReconstructionService.precompute_plate_rotations_cache(gpml_path, rot_file)
-
+        # Round target age to nearest 5 Ma step for exact key lookup
+        age_step = int(round(target_age / 5.0)) * 5
         reconstructed_geometries = []
 
         for _, row in raw_gdf.iterrows():
             geom = row.geometry
             plate_id = int(row.get("plate_id", 0))
-            cache_key = f"{plate_id}_{int(target_age)}"
+            cache_key = f"{plate_id}_{age_step}"
 
             if cache_key in rotations_cache:
                 pole_lat, pole_lon, angle_deg = rotations_cache[cache_key]
