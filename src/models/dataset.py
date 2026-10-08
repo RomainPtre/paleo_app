@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
+import geopandas as gpd
 
 class DinosaurDataset:
-    """Encapsulates PBDB dinosaur occurrence data and temporal filtering logic."""
+    """Encapsulates PBDB dinosaur occurrence data and temporal/spatial filtering logic."""
 
     def __init__(self, df: pd.DataFrame, lat_col: str, lng_col: str, precomputed_lookup: dict):
         self.df = df
@@ -10,11 +11,24 @@ class DinosaurDataset:
         self.lng_col = lng_col
         self.precomputed_lookup = precomputed_lookup
 
-    def get_filtered_occurrences(self, target_age: float, window: float = 2.5):
-        """Filters dataset rows matching the target age window."""
+    def get_filtered_occurrences(self, target_age: float, window: float = 2.5, boundary_gdf: gpd.GeoDataFrame = None):
+        """Filters dataset rows matching the target age window and optional geographic boundary."""
         mask = (self.df['min_ma'] <= (target_age + window)) & (self.df['max_ma'] >= (target_age - window))
         df_filtered = self.df[mask].copy()
         indices = df_filtered.index.values
+
+        # Apply spatial intersection filter if boundary_gdf is provided
+        if boundary_gdf is not None and not boundary_gdf.empty and not df_filtered.empty:
+            gdf_points = gpd.GeoDataFrame(
+                df_filtered,
+                geometry=gpd.points_from_xy(df_filtered[self.lng_col], df_filtered[self.lat_col]),
+                crs="EPSG:4326"
+            )
+            boundary_union = boundary_gdf.unary_union
+            spatial_mask = gdf_points.geometry.intersects(boundary_union).to_numpy()
+            df_filtered = df_filtered[spatial_mask].copy()
+            indices = indices[spatial_mask]
+
         return df_filtered, indices
 
     def get_coordinates(self, indices: np.ndarray, paleodem_age: int):

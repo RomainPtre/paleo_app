@@ -2,9 +2,8 @@ import numpy as np
 import plotly.graph_objects as go
 
 class MapViewBuilder:
-    """OOP Builder class for generating Plotly map figures with dynamic clade colors."""
+    """OOP Builder class for generating Plotly map figures with dynamic clade colors and vector boundaries."""
 
-    # Color configuration: Theropoda updated to Orange (#e67e22)
     COLOR_MAP = {
         'Sauropodes': '#3498db',     # Blue
         'Théropodes': '#e67e22',     # Orange
@@ -13,8 +12,8 @@ class MapViewBuilder:
     }
 
     @staticmethod
-    def build_figure(df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str) -> go.Figure:
-        """Builds interactive Plotly figure with styled markers per taxonomic group."""
+    def build_figure(df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, france_gdf=None) -> go.Figure:
+        """Builds interactive Plotly figure with styled markers per taxonomic group and red GPML boundary overlay."""
         if len(calc_lngs) > 0:
             rng = np.random.default_rng(seed=42)
             disp_lngs = calc_lngs + rng.uniform(-0.25, 0.25, size=len(calc_lngs))
@@ -23,6 +22,44 @@ class MapViewBuilder:
             disp_lngs, disp_lats = np.array([]), np.array([])
 
         fig = go.Figure()
+
+        # Render GPML France Boundaries Overlay in red (#e74c3c)
+        if france_gdf is not None and not france_gdf.empty:
+            for geom in france_gdf.geometry:
+                if geom.geom_type == 'Polygon':
+                    x, y = geom.exterior.xy
+                    fig.add_trace(go.Scatter(
+                        x=list(x),
+                        y=list(y),
+                        mode='lines',
+                        line=dict(color='#e74c3c', width=1.8),
+                        name='France (GPML)',
+                        hoverinfo='name',
+                        showlegend=False
+                    ))
+                elif geom.geom_type == 'MultiPolygon':
+                    for poly in geom.geoms:
+                        x, y = poly.exterior.xy
+                        fig.add_trace(go.Scatter(
+                            x=list(x),
+                            y=list(y),
+                            mode='lines',
+                            line=dict(color='#e74c3c', width=1.8),
+                            name='France (GPML)',
+                            hoverinfo='name',
+                            showlegend=False
+                        ))
+                elif geom.geom_type == 'LineString':
+                    x, y = geom.xy
+                    fig.add_trace(go.Scatter(
+                        x=list(x),
+                        y=list(y),
+                        mode='lines',
+                        line=dict(color='#e74c3c', width=1.8),
+                        name='France (GPML)',
+                        hoverinfo='name',
+                        showlegend=False
+                    ))
 
         if len(df_filtered) > 0:
             for group_name in df_filtered['dino_group'].unique():

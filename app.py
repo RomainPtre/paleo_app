@@ -4,6 +4,7 @@ from src.services.map_service import MapService
 from src.services.timeline_service import TimelineService
 from src.services.silhouette_service import SilhouetteService
 from src.services.search_service import SearchService
+from src.services.reconstruction_service import ReconstructionService
 from src.ui.map_view import MapViewBuilder
 from src.ui.sidebar_view import SidebarView
 
@@ -18,7 +19,7 @@ for group_key in ["show_sauro", "show_thero", "show_ornitho", "show_indet"]:
         st.session_state[group_key] = True
 
 if "target_age" not in st.session_state:
-    st.session_state.target_age = 100
+    st.session_state.target_age = 0
 
 def toggle_group(key_name: str):
     """Callback function toggling single clade visibility in session state."""
@@ -35,7 +36,6 @@ master_label = "Tout cacher" if all_active else "Tout afficher"
 master_bg = "#e74c3c" if all_active else "#2ecc71"
 master_txt = "#ffffff"
 
-# Define dynamic background colors based on active/inactive toggle state
 sauro_bg = "#3498db" if st.session_state.show_sauro else "#1e293b"
 sauro_txt = "#ffffff" if st.session_state.show_sauro else "#64748b"
 
@@ -50,7 +50,6 @@ indet_txt = "#ffffff" if st.session_state.show_indet else "#64748b"
 
 st.markdown(f"""
 <style>
-/* Anti-flicker styling for Plotly container */
 div[data-testid="stPlotlyChart"], 
 div[data-testid="stPlotlyChart"] * {{
  transition: none !important;
@@ -60,7 +59,6 @@ div[data-testid="stElementContainer"] {{
  transition: none !important;
 }}
 
-/* Dynamic styling for master toggle button */
 .st-key-btn_master button, .st-key-btn_master button:hover, .st-key-btn_master button:focus {{
  background-color: {master_bg} !important;
  color: {master_txt} !important;
@@ -72,7 +70,6 @@ div[data-testid="stElementContainer"] {{
  color: {master_txt} !important;
 }}
 
-/* Custom styled filter buttons targeting button tag and paragraph child */
 .st-key-btn_sauro button, .st-key-btn_sauro button:hover, .st-key-btn_sauro button:focus {{
  background-color: {sauro_bg} !important;
  color: {sauro_txt} !important;
@@ -125,6 +122,8 @@ dem_store, dem_file_map = MapService.load_all_paleodems()
 timeline_service = TimelineService()
 base_chart_img = timeline_service.load_base_chart()
 
+reconstruction_service = ReconstructionService()
+
 # --- 1. Titre seul tout en haut ---
 st.title("🦖 Le monde des dinosaures")
 
@@ -148,7 +147,6 @@ with col_search:
             label_visibility="collapsed"
         )
         
-        # Traitement de la sélection dans la recherche
         if selected_dino:
             spec_idx, spec_age = SearchService.get_specimen_search_details(dataset.df, selected_dino)
             search_specimen_idx = spec_idx
@@ -166,7 +164,6 @@ with col_filters:
 
         c1, c2, c3, c4 = st.columns(4)
         
-        # --- Sauropodes (Silhouette à gauche) ---
         with c1:
             sc1, sc2 = st.columns([1, 2.5], vertical_alignment="center")
             with sc1:
@@ -177,7 +174,6 @@ with col_filters:
             with sc2:
                 st.button("Sauropodes", key="btn_sauro", on_click=toggle_group, args=("show_sauro",))
 
-        # --- Théropodes (Silhouette à gauche) ---
         with c2:
             sc1, sc2 = st.columns([1, 2.5], vertical_alignment="center")
             with sc1:
@@ -188,7 +184,6 @@ with col_filters:
             with sc2:
                 st.button("Théropodes", key="btn_thero", on_click=toggle_group, args=("show_thero",))
 
-        # --- Ornithischiens (Silhouette à gauche) ---
         with c3:
             sc1, sc2 = st.columns([1, 2.5], vertical_alignment="center")
             with sc1:
@@ -199,11 +194,15 @@ with col_filters:
             with sc2:
                 st.button("Ornithischiens", key="btn_ornitho", on_click=toggle_group, args=("show_ornitho",))
 
-        # --- Indéterminé (sans silhouette) ---
         with c4:
             st.button("Indéterminé", key="btn_indet", on_click=toggle_group, args=("show_indet",))
 
-# 3. Main time navigation slider (Lié directement à target_age)
+# --- 3. Encadré "Les pays" ---
+with st.container(border=True):
+    st.markdown("**Les pays**")
+    filter_france = st.checkbox("Afficher la France métropolitaine", value=False)
+
+# 4. Main time navigation slider
 target_age = st.slider(
     "⏱️ Âge de la carte (Ma)",
     min_value=0,
@@ -212,11 +211,17 @@ target_age = st.slider(
     key="target_age"
 )
 
-# 4. Process paleodem and filtered occurrences
+# 5. Process paleodem and filtered occurrences
 b64_image_str, paleodem_filename, paleodem_age = MapService.get_closest_map(dem_store, dem_file_map, target_age)
+
+# Load France boundary rotated precisely to paleodem_age for perfect alignment with raster background
+france_reconstructed_gdf = (
+    reconstruction_service.get_france_boundaries(target_age=paleodem_age) if filter_france else None
+)
+
+# Get occurrences globally (no spatial filtering applied to preserve all fossil points)
 df_filtered, active_indices = dataset.get_filtered_occurrences(target_age)
 
-# Filtrage par recherche textuelle si un taxon est sélectionné
 if selected_dino and not df_filtered.empty and "accepted_name" in df_filtered.columns:
     mask_search = (df_filtered["accepted_name"] == selected_dino).to_numpy()
     df_filtered = df_filtered[mask_search]
@@ -224,7 +229,6 @@ if selected_dino and not df_filtered.empty and "accepted_name" in df_filtered.co
 
 calc_lngs, calc_lats = dataset.get_coordinates(active_indices, paleodem_age)
 
-# Build active clade list from session state toggle buttons
 selected_groups = []
 if st.session_state.show_sauro:
     selected_groups.append('Sauropodes')
@@ -242,7 +246,7 @@ if len(df_filtered) > 0:
     calc_lngs = calc_lngs[mask_groups]
     calc_lats = calc_lats[mask_groups]
 
-# 5. Render sidebar components
+# 6. Render sidebar components
 SidebarView.render_info(len(df_filtered))
 specimen_container = st.sidebar.container()
 
@@ -254,9 +258,9 @@ if base_chart_img is not None:
 else:
     st.sidebar.warning("Charte introuvable dans data/assets/illustrations/")
 
-# 6. Build interactive map
+# 7. Build interactive map with reconstructed France boundary Overlay
 fig = MapViewBuilder.build_figure(
-    df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str
+    df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, france_gdf=france_reconstructed_gdf
 )
 
 selection = st.plotly_chart(
@@ -267,7 +271,7 @@ selection = st.plotly_chart(
     key="map_canvas"
 )
 
-# 7. Render selected specimen details in reserved container (de la recherche ou du clic carte)
+# 8. Render selected specimen details in reserved container
 selected_customdata_idx = None
 
 if selection and isinstance(selection, dict) and "selection" in selection:
@@ -276,7 +280,6 @@ if selection and isinstance(selection, dict) and "selection" in selection:
         point_data = pts[0]
         selected_customdata_idx = point_data.get("customdata")
 
-# Priorité au spécimen recherché s'il vient d'être sélectionné
 final_specimen_idx = search_specimen_idx if search_specimen_idx is not None else selected_customdata_idx
 
 if final_specimen_idx is not None:

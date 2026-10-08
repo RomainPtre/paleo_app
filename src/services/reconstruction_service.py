@@ -1,28 +1,49 @@
 import os
+import xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Polygon, LineString, MultiPolygon
 import streamlit as st
 
-class ReconstructionService:
-    """Service dedicated to generating precomputed coordinate NPZ archives using PALEOMAP files."""
+try:
+    import pygplates
+    HAS_PYGPLATES = True
+except ImportError:
+    HAS_PYGPLATES = False
 
-    def __init__(self, rotations_dir: str = os.path.join("data", "rotations")):
+
+class ReconstructionService:
+    """Service dedicated to generating precomputed coordinate NPZ archives and extracting/rotating GPML boundary features."""
+
+    def __init__(
+        self,
+        rotations_dir: str = os.path.join("data", "rotations"),
+        reconstructions_dir: str = os.path.join("data", "reconstructions"),
+    ):
         self.rotations_dir = rotations_dir
+        self.reconstructions_dir = reconstructions_dir
         self.rot_file = os.path.join(self.rotations_dir, "PALEOMAP_PlateModel.rot")
         self.gpml_file = os.path.join(self.rotations_dir, "PALEOMAP_StaticPolygons.gpml")
+        self.gpml_boundaries_file = os.path.join(self.reconstructions_dir, "PALEOMAP_PoliticalBoundaries.gpml")
 
     def has_required_files(self) -> bool:
         """Checks if both required PALEOMAP rotation files are present."""
         return os.path.exists(self.rot_file) and os.path.exists(self.gpml_file)
 
-    def generate_precomputed_npz(self, df: pd.DataFrame, lat_col: str, lng_col: str, map_ages: list, output_npz_path: str):
+    def generate_precomputed_npz(
+        self, df: pd.DataFrame, lat_col: str, lng_col: str, map_ages: list, output_npz_path: str
+    ):
         """Runs PyGPlates reconstruction once across all map ages and saves compressed NPZ archive."""
         if not self.has_required_files():
-            st.warning(f"Rotation files missing in {self.rotations_dir}. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml.")
+            st.warning(
+                f"Rotation files missing in {self.rotations_dir}. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml."
+            )
             return {}
 
         try:
             import pygplates
+
             st.info("Generating precomputed coordinates archive using PyGPlates (one-time process)...")
 
             rotation_model = pygplates.RotationModel(self.rot_file)
@@ -31,7 +52,6 @@ class ReconstructionService:
             lats = df[lat_col].to_numpy()
             lngs = df[lng_col].to_numpy()
 
-            # Create base point features
             point_features = []
             for lat, lng in zip(lats, lngs):
                 pt = pygplates.PointOnSphere(lat, lng)
@@ -39,13 +59,14 @@ class ReconstructionService:
                 feature.set_geometry(pt)
                 point_features.append(feature)
 
-            # Assign plate IDs
             partitioned_features = pygplates.partition(point_features, partition_polygons)
 
             lookup = {}
             for age in map_ages:
                 reconstructed_features = []
-                pygplates.reconstruct(partitioned_features, rotation_model, reconstructed_features, float(age))
+                pygplates.reconstruct(
+                    partitioned_features, rotation_model, reconstructed_features, float(age)
+                )
 
                 rec_lats, rec_lngs = [], []
                 for rf in reconstructed_features:
@@ -65,3 +86,127 @@ class ReconstructionService:
         except Exception as e:
             st.error(f"Error during PyGPlates precomputation: {e}")
             return {}
+
+    @staticmethod
+    @st.cache_data
+    def extract_france_boundaries(gpml_path: str) -> gpd.GeoDataFrame:
+        """
+        Parses the GPML political boundaries file and extracts geometry features for France at present-day (age 0).
+        Converts coordinates from GPML standard (lat, lon) to Shapely standard (lon, lat).
+        """
+        if not os.path.exists(gpml_path):
+            return gpd.GeoDataFrame()
+
+        tree = ET.parse(gpml_path)
+        root = tree.getroot()
+        namespaces = {
+            "gpml": "http://www.gplates.org/gplates",
+            "gml": "http://www.opengis.net/gml",
+        }
+
+        geometries = []
+        metadata = []
+
+        for feature in root.findall(".//gpml:UnclassifiedFeature", namespaces):
+            name_elem = feature.find('.//gpml:key[.="NAME"]/../gpml:value', namespaces)
+            fips_elem = feature.find('.//gpml:key[.="FIPS_CODE"]/../gpml:value', namespaces)
+
+            plate_id = 307
+            plate_elem = feature.find(".//gpml:reconstructionPlateId//gpml:value", namespaces)
+            if plate_elem is not None and plate_elem.text:
+                try:
+                    parsed_id = int(plate_elem.text.strip())
+                    if parsed_id != 0:
+                        plate_id = parsed_id
+                except ValueError:
+                    pass
+
+            name = name_elem.text if name_elem is not None else ""
+            fips = fips_elem.text if fips_elem is not None else ""
+
+            if name == "France" or fips == "FR":
+                for pos_list in feature.findall(".//gml:posList", namespaces):
+                    raw_coords = list(map(float, pos_list.text.strip().split()))
+                    coords = [
+                        (raw_coords[i + 1], raw_coords[i]) for i in range(0, len(raw_coords), 2)
+                    ]
+
+                    if len(coords) >= 3:
+                        if coords[0] == coords[-1] and len(coords) >= 4:
+                            geom = Polygon(coords)
+                        else:
+                            geom = LineString(coords)
+
+                        geometries.append(geom)
+                        metadata.append({"name": name, "fips": fips, "plate_id": plate_id})
+
+        return gpd.GeoDataFrame(metadata, geometry=geometries, crs="EPSG:4326")
+
+    def get_france_boundaries(self, target_age: float = 0.0) -> gpd.GeoDataFrame:
+        """
+        Retrieves France boundaries and calculates tectonic rotation for requested target age.
+        """
+        gpml_path = self.gpml_boundaries_file
+        if not os.path.exists(gpml_path):
+            gpml_path = os.path.join(self.rotations_dir, "PALEOMAP_PoliticalBoundaries.gpml")
+
+        return self.get_reconstructed_france_boundaries(gpml_path, self.rot_file, float(target_age))
+
+    @staticmethod
+    @st.cache_data
+    def get_reconstructed_france_boundaries(gpml_path: str, rot_file: str, target_age: float) -> gpd.GeoDataFrame:
+        """
+        Extracts boundaries and applies tectonic Euler rotations using primitive hashable types for Streamlit caching.
+        """
+        raw_gdf = ReconstructionService.extract_france_boundaries(gpml_path)
+        if raw_gdf.empty or target_age == 0.0 or not HAS_PYGPLATES or not os.path.exists(rot_file):
+            return raw_gdf
+
+        try:
+            import pygplates
+
+            rotation_model = pygplates.RotationModel(rot_file)
+            reconstructed_geometries = []
+
+            for _, row in raw_gdf.iterrows():
+                geom = row.geometry
+                plate_id = int(row.get("plate_id", 307))
+                if plate_id == 0:
+                    plate_id = 307
+
+                finite_rotation = rotation_model.get_rotation(
+                    float(target_age), moving_plate_id=plate_id, fixed_plate_id=0
+                )
+
+                def rotate_coords(coords_list):
+                    rotated = []
+                    for lon, lat in coords_list:
+                        pt = pygplates.PointOnSphere(lat, lon)
+                        rot_pt = finite_rotation * pt
+                        r_lat, r_lon = rot_pt.to_lat_lon()
+                        rotated.append((r_lon, r_lat))
+                    return rotated
+
+                if geom.geom_type == "Polygon":
+                    new_exterior = rotate_coords(geom.exterior.coords)
+                    new_geom = Polygon(new_exterior)
+                elif geom.geom_type == "LineString":
+                    new_coords = rotate_coords(geom.coords)
+                    new_geom = LineString(new_coords)
+                elif geom.geom_type == "MultiPolygon":
+                    polys = []
+                    for poly in geom.geoms:
+                        new_ext = rotate_coords(poly.exterior.coords)
+                        polys.append(Polygon(new_ext))
+                    new_geom = MultiPolygon(polys)
+                else:
+                    new_geom = geom
+
+                reconstructed_geometries.append(new_geom)
+
+            rec_gdf = raw_gdf.copy()
+            rec_gdf.geometry = reconstructed_geometries
+            return rec_gdf
+
+        except Exception:
+            return raw_gdf
