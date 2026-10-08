@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from src.services.preprocessor import PreprocessorService
 from src.services.map_service import MapService
@@ -116,6 +117,12 @@ div[data-testid="stElementContainer"] {{
 .st-key-btn_indet button p {{
  color: {indet_txt} !important;
 }}
+
+/* Typography adjustments for slider age value label */
+div[data-testid="stSlider"] p {{
+ font-size: 1.15rem !important;
+ font-weight: bold !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -127,10 +134,10 @@ base_chart_img = timeline_service.load_base_chart()
 
 reconstruction_service = ReconstructionService()
 
-# --- 1. Titre seul tout en haut ---
+# --- 1. App Title ---
 st.title("🦖 Le monde des dinosaures")
 
-# --- 2. Header layout: Barre de recherche à gauche, Filtres à droite ---
+# --- 2. Header layout: Search bar on left, Clade filters on right ---
 col_search, col_filters = st.columns([1, 1.2])
 
 search_specimen_idx = None
@@ -200,7 +207,7 @@ with col_filters:
         with c4:
             st.button("Indéterminé", key="btn_indet", on_click=toggle_group, args=("show_indet",))
 
-# --- 3. Encadré "🔍 Rechercher un pays" ---
+# --- 3. Country Search Container ---
 with st.container(border=True):
     st.markdown("**🔍 Rechercher un pays**")
     col_p1, col_p2 = st.columns([2.5, 1], vertical_alignment="bottom")
@@ -217,7 +224,6 @@ with st.container(border=True):
             label_visibility="collapsed"
         )
         
-        # Activer automatiquement le contour lorsqu'un nouveau pays est sélectionné
         if selected_country and st.session_state.get("last_selected_country") != selected_country:
             st.session_state.show_country_boundary = True
             st.session_state.last_selected_country = selected_country
@@ -230,25 +236,26 @@ with st.container(border=True):
             key="show_country_boundary"
         )
 
-# 4. Main time navigation slider
-target_age = st.slider(
-    "⏱️ Âge de la carte (Ma)",
-    min_value=0,
-    max_value=320,
-    step=5,
-    key="target_age"
-)
+# --- 4. Target Age Slider Container ---
+with st.container(border=True):
+    st.markdown("**⏱️ Âge de la carte (Millions d'années)**")
+    target_age = st.slider(
+        "⏱️ Âge de la carte (Millions d'années)",
+        min_value=0,
+        max_value=320,
+        step=5,
+        key="target_age",
+        label_visibility="collapsed"
+    )
 
-# 5. Process paleodem and filtered occurrences
+# 5. Process paleodem raster and filtered fossil occurrences
 b64_image_str, paleodem_filename, paleodem_age = MapService.get_closest_map(dem_store, dem_file_map, target_age)
 
-# Load selected country boundary rotated precisely to paleodem_age for perfect raster alignment
 country_reconstructed_gdf = (
     reconstruction_service.get_country_boundaries(country_name=selected_country, target_age=paleodem_age)
     if (show_country_boundary and selected_country) else None
 )
 
-# Get occurrences globally (no spatial filtering applied to preserve all fossil points)
 df_filtered, active_indices = dataset.get_filtered_occurrences(target_age)
 
 if selected_dino and not df_filtered.empty and "accepted_name" in df_filtered.columns:
@@ -287,7 +294,7 @@ if base_chart_img is not None:
 else:
     st.sidebar.warning("Charte introuvable dans data/assets/illustrations/")
 
-# 7. Build interactive map with reconstructed country boundary Overlay
+# 7. Build interactive Plotly map with reconstructed country boundary overlay
 fig = MapViewBuilder.build_figure(
     df_filtered, active_indices, calc_lngs, calc_lats, b64_image_str, country_gdf=country_reconstructed_gdf
 )
@@ -300,7 +307,7 @@ selection = st.plotly_chart(
     key="map_canvas"
 )
 
-# 8. Render selected specimen details in reserved container
+# 8. Render selected specimen details in reserved sidebar container
 selected_customdata_idx = None
 
 if selection and isinstance(selection, dict) and "selection" in selection:
@@ -313,3 +320,29 @@ final_specimen_idx = search_specimen_idx if search_specimen_idx is not None else
 
 if final_specimen_idx is not None:
     SidebarView.render_selected_specimen(dataset.df, final_specimen_idx, container=specimen_container)
+
+# --- 9. References and Acknowledgments Container ---
+st.markdown("---")
+with st.container(border=True):
+    col_logo, col_credits = st.columns([1, 4], vertical_alignment="center")
+
+    logo_path = os.path.join("assets", "logo", "Logo-DIM_PAMIR-FINAL_RVB-accroche_regionIDF.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join("data", "assets", "logo", "Logo-DIM_PAMIR-FINAL_RVB-accroche_regionIDF.png")
+
+    with col_logo:
+        if os.path.exists(logo_path):
+            st.image(logo_path, use_container_width=True)
+
+    with col_credits:
+        st.markdown("""
+<p style="font-style: italic;">
+  <u><b>Références et remerciements</b></u>
+</p>
+
+- *Reconstructions paléogéographiques : Scotese, C. R., & Wright, N. (2018). PALEOMAP paleodigital elevation models (PaleoDEMS) for the Phanerozoic. Paleomap Proj, 1, 26.*
+- *La base de données de dinosaures non-aviens provient de la <a href="https://paleobiodb.org/classic" target="_blank">PBDB</a> (accès le 5/10/2026).*
+- *Échelle chronostratigraphique : Karlstrom, K. E. (2021). Telling time at Grand Canyon National Park: 2020 update. US Department of the Interior, National Park Service, Natural Resource Stewardship and Science. Modifiée à partir de Cohen, K. M., Finney, S. C., Gibbard, P. L., & Fan, J. X. (2013). The ICS international chronostratigraphic chart. Episodes Journal of International Geoscience, 36(3), 199-204.*
+- *Silhouettes de dinosaures : S. Hartman*
+- *Financements : DIM PAMIR dans le cadre du projet EcoCLimat (R. Pintore et al.)*
+""", unsafe_allow_html=True)
