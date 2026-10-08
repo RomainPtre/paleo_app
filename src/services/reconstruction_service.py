@@ -1,4 +1,5 @@
 import os
+import re
 import xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
@@ -27,17 +28,32 @@ class ReconstructionService:
         self.gpml_file = os.path.join(self.rotations_dir, "PALEOMAP_StaticPolygons.gpml")
         self.gpml_boundaries_file = os.path.join(self.reconstructions_dir, "PALEOMAP_PoliticalBoundaries.gpml")
 
+    def _resolve_file(self, filename: str) -> str:
+        """Helper to resolve file paths across potential data subdirectories dynamically."""
+        candidates = [
+            os.path.join(self.reconstructions_dir, filename),
+            os.path.join(self.rotations_dir, filename),
+            os.path.join("data", "raw", filename),
+            os.path.join("data", filename),
+        ]
+        return next((p for p in candidates if os.path.exists(p)), os.path.join(self.rotations_dir, filename))
+
     def has_required_files(self) -> bool:
         """Checks if both required PALEOMAP rotation files are present."""
-        return os.path.exists(self.rot_file) and os.path.exists(self.gpml_file)
+        rot_path = self._resolve_file("PALEOMAP_PlateModel.rot")
+        gpml_path = self._resolve_file("PALEOMAP_StaticPolygons.gpml")
+        return os.path.exists(rot_path) and os.path.exists(gpml_path)
 
     def generate_precomputed_npz(
         self, df: pd.DataFrame, lat_col: str, lng_col: str, map_ages: list, output_npz_path: str
     ):
         """Runs PyGPlates reconstruction once across all map ages and saves compressed NPZ archive."""
-        if not self.has_required_files():
+        rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
+        gpml_file = self._resolve_file("PALEOMAP_StaticPolygons.gpml")
+
+        if not (os.path.exists(rot_file) and os.path.exists(gpml_file)):
             st.warning(
-                f"Rotation files missing in {self.rotations_dir}. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml."
+                f"Rotation files missing. Expected PALEOMAP_PlateModel.rot and PALEOMAP_StaticPolygons.gpml."
             )
             return {}
 
@@ -46,8 +62,8 @@ class ReconstructionService:
 
             st.info("Generating precomputed coordinates archive using PyGPlates (one-time process)...")
 
-            rotation_model = pygplates.RotationModel(self.rot_file)
-            partition_polygons = pygplates.FeatureCollection(self.gpml_file)
+            rotation_model = pygplates.RotationModel(rot_file)
+            partition_polygons = pygplates.FeatureCollection(gpml_file)
 
             lats = df[lat_col].to_numpy()
             lngs = df[lng_col].to_numpy()
@@ -89,9 +105,7 @@ class ReconstructionService:
 
     def get_available_countries(self) -> list[str]:
         """Returns sorted list of available country names from GPML political boundaries file."""
-        gpml_path = self.gpml_boundaries_file
-        if not os.path.exists(gpml_path):
-            gpml_path = os.path.join(self.rotations_dir, "PALEOMAP_PoliticalBoundaries.gpml")
+        gpml_path = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
         return self._extract_available_countries(gpml_path)
 
     @staticmethod
@@ -144,11 +158,16 @@ class ReconstructionService:
             if name.lower() == country_name.lower():
                 plate_id = 0
                 plate_elem = feature.find(".//gpml:reconstructionPlateId//gpml:value", namespaces)
+                if plate_elem is None or not plate_elem.text:
+                    plate_elem = feature.find(".//gpml:reconstructionPlateId", namespaces)
+
                 if plate_elem is not None and plate_elem.text:
-                    try:
-                        plate_id = int(plate_elem.text.strip())
-                    except ValueError:
-                        pass
+                    match = re.search(r"\d+", plate_elem.text)
+                    if match:
+                        try:
+                            plate_id = int(match.group())
+                        except ValueError:
+                            pass
 
                 fips_elem = feature.find('.//gpml:key[.="FIPS_CODE"]/../gpml:value', namespaces)
                 fips = fips_elem.text.strip() if (fips_elem is not None and fips_elem.text) else ""
@@ -177,12 +196,11 @@ class ReconstructionService:
         if not country_name:
             return gpd.GeoDataFrame()
 
-        gpml_path = self.gpml_boundaries_file
-        if not os.path.exists(gpml_path):
-            gpml_path = os.path.join(self.rotations_dir, "PALEOMAP_PoliticalBoundaries.gpml")
+        gpml_path = self._resolve_file("PALEOMAP_PoliticalBoundaries.gpml")
+        rot_file = self._resolve_file("PALEOMAP_PlateModel.rot")
 
         return self.get_reconstructed_country_boundaries(
-            gpml_path, self.rot_file, country_name, float(target_age)
+            gpml_path, rot_file, country_name, float(target_age)
         )
 
     @staticmethod
