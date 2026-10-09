@@ -126,22 +126,53 @@ div[data-testid="stSlider"] p {{
 
 /* Responsive layout adjustments for mobile devices (< 768px) */
 @media (max-width: 768px) {{
-  /* Cap silhouette image size when columns stack vertically on mobile */
-  div[data-testid="stColumn"] img {{
-    max-width: 60px !important;
+  /* 1. Keep nested clade columns side-by-side (silhouette on the left of button) */
+  div[data-testid="stHorizontalBlock"] div[data-testid="stHorizontalBlock"] {{
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }}
+  div[data-testid="stHorizontalBlock"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-child(1) {{
+    width: 25% !important;
+    min-width: 25% !important;
+    flex: 0 0 25% !important;
+  }}
+  div[data-testid="stHorizontalBlock"] div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-child(2) {{
+    width: 75% !important;
+    min-width: 75% !important;
+    flex: 1 1 75% !important;
+  }}
+
+  /* Size dinosaur silhouette images inside clade filters */
+  div[data-testid="stHorizontalBlock"] div[data-testid="stHorizontalBlock"] img {{
+    max-width: 45px !important;
+    width: auto !important;
     height: auto !important;
-    margin: 0 auto !important;
     display: block !important;
+    margin: 0 auto !important;
   }}
 
-  /* Ensure map chart maintains sufficient height on mobile screens */
+  /* Preserve full size for DIM Pamir logo in footer acknowledgments */
+  div[data-testid="stColumn"] img[src*="Logo-DIM_PAMIR"] {{
+    max-width: 200px !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    margin: 0 auto 10px auto !important;
+  }}
+
+  /* 2. Lock Plotly map container to constant height regardless of age/date */
   div[data-testid="stPlotlyChart"], 
-  div[data-testid="stPlotlyChart"] iframe {{
-    height: 55vh !important;
-    min-height: 380px !important;
+  div[data-testid="stPlotlyChart"] > div,
+  div[data-testid="stPlotlyChart"] iframe,
+  div[data-testid="stPlotlyChart"] .js-plotly-plot,
+  div[data-testid="stPlotlyChart"] .plot-container {{
+    height: 420px !important;
+    min-height: 420px !important;
+    max-height: 420px !important;
   }}
 
-  /* Enlarge target age slider handle for easier touch interaction */
+  /* 3. Target age slider handle adjustments for touch input */
   div[data-testid="stSlider"] [role="slider"] {{
     width: 26px !important;
     height: 26px !important;
