@@ -123,6 +123,37 @@ div[data-testid="stSlider"] p {{
  font-size: 1.15rem !important;
  font-weight: bold !important;
 }}
+
+/* Responsive layout adjustments for mobile devices (< 768px) */
+@media (max-width: 768px) {{
+  /* Cap silhouette image size when columns stack vertically on mobile */
+  div[data-testid="stColumn"] img {{
+    max-width: 60px !important;
+    height: auto !important;
+    margin: 0 auto !important;
+    display: block !important;
+  }}
+
+  /* Ensure map chart maintains sufficient height on mobile screens */
+  div[data-testid="stPlotlyChart"], 
+  div[data-testid="stPlotlyChart"] iframe {{
+    height: 55vh !important;
+    min-height: 380px !important;
+  }}
+
+  /* Enlarge target age slider handle for easier touch interaction */
+  div[data-testid="stSlider"] [role="slider"] {{
+    width: 26px !important;
+    height: 26px !important;
+    top: -9px !important;
+  }}
+
+  /* Increase touch padding area around slider */
+  div[data-testid="stSlider"] {{
+    padding-top: 15px !important;
+    padding-bottom: 15px !important;
+  }}
+}}
 </style>
 """, unsafe_allow_html=True)
 
